@@ -1,0 +1,13 @@
+{
+  "name": "@proxispeak/shared",
+  "version": "1.0.0",
+  "description": "Shared TypeScript definitions and contracts for ProxiSpeak",
+  "main": "types/index.ts",
+  "types": "types/index.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

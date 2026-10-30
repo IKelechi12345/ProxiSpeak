@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@proxispeak/shared": ["../shared/types/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "../shared/types/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

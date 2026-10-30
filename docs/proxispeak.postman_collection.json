@@ -1,0 +1,180 @@
+{
+  "info": {
+    "name": "ProxiSpeak API Collection",
+    "_postman_id": "proxispeak-api-collection-v1",
+    "description": "REST API and Signaling endpoints for ProxiSpeak Geospatial Proximity Audio Ecosystem",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"DemoUser\",\n  \"email\": \"demo@proxispeak.io\",\n  \"password\": \"password123\",\n  \"avatar\": \"avatar-1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login User",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.tokens) {",
+                  "  pm.collectionVariables.set('token', json.data.tokens.accessToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@proxispeak.io\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "Get Profile (Me)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Offices",
+      "item": [
+        {
+          "name": "List Offices",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/offices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "offices"]
+            }
+          }
+        },
+        {
+          "name": "Create Office",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Virtual Innovation Campus\",\n  \"description\": \"Spatial audio collaborative workspace\",\n  \"maxUsers\": 50\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/offices",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "offices"]
+            }
+          }
+        },
+        {
+          "name": "Get Office By ID",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/offices/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "offices", ":id"],
+              "variable": [{ "key": "id", "value": "" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Performance & Audit",
+      "item": [
+        {
+          "name": "Spatial Audit Report",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/audit/spatial",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "audit", "spatial"]
+            }
+          }
+        },
+        {
+          "name": "Run Spatial Benchmark",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/api/audit/benchmark?users=50&iterations=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "audit", "benchmark"],
+              "query": [
+                { "key": "users", "value": "50" },
+                { "key": "iterations", "value": "100" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "System Health",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/audit/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "audit", "health"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

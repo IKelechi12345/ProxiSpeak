@@ -5,6 +5,7 @@
  * - Dual-radius hysteresis (Enter <= 100px, Exit > 120px) to prevent connection flapping
  * - Spatial grid optimization for high-density scalability
  * - Line-of-sight sound blocking & obstacle attenuation
+ * - Meeting Zone acoustic isolation & private breakout rooms
  * - Real-time spatial query latency performance audit
  */
 
@@ -12,6 +13,7 @@ import {
   Participant,
   Position,
   Obstacle,
+  MeetingZone,
   ProximityRelationship,
   SpatialAuditReport,
 } from '@proxispeak/shared';
@@ -48,6 +50,8 @@ export class ProximityEngine {
   private officeGrids: Map<string, SpatialGrid<Participant>> = new Map();
   // Office ID -> Obstacles list
   private officeObstacles: Map<string, Obstacle[]> = new Map();
+  // Office ID -> Meeting Zones list
+  private officeZones: Map<string, MeetingZone[]> = new Map();
   // Pairwise proximity state: Key `${officeId}:${userId}` -> Set of peerIds currently in proximity
   private activeProximityPairs: Map<string, Set<string>> = new Map();
 
@@ -65,6 +69,25 @@ export class ProximityEngine {
 
   public setOfficeObstacles(officeId: string, obstacles: Obstacle[]): void {
     this.officeObstacles.set(officeId, obstacles);
+  }
+
+  public setOfficeZones(officeId: string, zones: MeetingZone[]): void {
+    this.officeZones.set(officeId, zones);
+  }
+
+  public getZoneForPosition(officeId: string, pos: Position): MeetingZone | null {
+    const zones = this.officeZones.get(officeId) || [];
+    for (const zone of zones) {
+      if (
+        pos.x >= zone.bounds.x &&
+        pos.x <= zone.bounds.x + zone.bounds.width &&
+        pos.y >= zone.bounds.y &&
+        pos.y <= zone.bounds.y + zone.bounds.height
+      ) {
+        return zone;
+      }
+    }
+    return null;
   }
 
   private getOfficeGrid(officeId: string): SpatialGrid<Participant> {
@@ -100,9 +123,22 @@ export class ProximityEngine {
     }
 
     const obstacles = this.officeObstacles.get(officeId) || [];
+    const localZone = this.getZoneForPosition(officeId, participant.position);
 
     // Query candidate peers within exitRadius + grid buffer
     const candidates = grid.getCandidates(participant.position, this.exitRadius);
+
+    // If local participant is in a private meeting zone, also include other members in that zone
+    if (localZone && localZone.isPrivate) {
+      const allParticipants = this.getParticipantsInOffice(officeId);
+      for (const p of allParticipants) {
+        if (p.userId === participant.userId) continue;
+        const pZone = this.getZoneForPosition(officeId, p.position);
+        if (pZone && pZone.id === localZone.id && !candidates.some((c) => c.userId === p.userId)) {
+          candidates.push(p);
+        }
+      }
+    }
 
     const enteredPeers: ProximityDiffResult['enteredPeers'] = [];
     const leftPeerIds: string[] = [];
@@ -114,10 +150,26 @@ export class ProximityEngine {
 
       const dist = calculateEuclideanDistance(participant.position, candidate.position);
       const wasInProximity = currentActivePeers.has(candidate.userId);
+      const candidateZone = this.getZoneForPosition(officeId, candidate.position);
 
-      // Hysteresis logic
+      const isInSamePrivateZone =
+        localZone &&
+        candidateZone &&
+        localZone.id === candidateZone.id &&
+        localZone.isPrivate;
+
+      const isOneInPrivateZone =
+        (localZone?.isPrivate || candidateZone?.isPrivate) && !isInSamePrivateZone;
+
+      // Hysteresis & Acoustic Isolation logic
       let isInProximityNow = false;
-      if (wasInProximity) {
+      if (isOneInPrivateZone) {
+        // Complete acoustic isolation: cannot hear into or out of a private room
+        isInProximityNow = false;
+      } else if (isInSamePrivateZone) {
+        // Collocated in private conference/breakout room: connected for discussion
+        isInProximityNow = true;
+      } else if (wasInProximity) {
         // Must stay in proximity until exceeding exit radius
         isInProximityNow = dist <= this.exitRadius;
       } else {
@@ -129,13 +181,23 @@ export class ProximityEngine {
         stillNearbyIds.add(candidate.userId);
 
         // Calculate audio metrics
-        const baseDistanceGain = calculateDistanceAttenuation(dist, this.exitRadius);
-        const obstacleResult = calculateObstacleAttenuation(
-          participant.position,
-          candidate.position,
-          obstacles
-        );
-        const finalAttenuation = baseDistanceGain * obstacleResult.factor;
+        let finalAttenuation: number;
+        let isObstructed = false;
+
+        if (isInSamePrivateZone) {
+          finalAttenuation = 1.0;
+          isObstructed = false;
+        } else {
+          const baseDistanceGain = calculateDistanceAttenuation(dist, this.exitRadius);
+          const obstacleResult = calculateObstacleAttenuation(
+            participant.position,
+            candidate.position,
+            obstacles
+          );
+          finalAttenuation = baseDistanceGain * obstacleResult.factor;
+          isObstructed = obstacleResult.isObstructed;
+        }
+
         const relativeX = calculateStereoPan(participant.position, candidate.position, this.exitRadius);
         const relativeY = (candidate.position.y - participant.position.y) / this.exitRadius;
 
@@ -147,7 +209,7 @@ export class ProximityEngine {
           relativeX: Math.round(relativeX * 100) / 100,
           relativeY: Math.round(relativeY * 100) / 100,
           attenuation: Math.round(finalAttenuation * 1000) / 1000,
-          isObstructed: obstacleResult.isObstructed,
+          isObstructed,
           isMuted: candidate.isMuted,
           isSpeaking: candidate.isSpeaking,
         };
@@ -159,30 +221,28 @@ export class ProximityEngine {
           const shouldInitiateOffer = participant.userId > candidate.userId;
           enteredPeers.push({
             peer: candidate,
-            distance: rel.distance,
-            relativeX: rel.relativeX,
-            relativeY: rel.relativeY,
-            attenuation: rel.attenuation,
-            isObstructed: rel.isObstructed,
+            distance: dist,
+            relativeX,
+            relativeY,
+            attenuation: finalAttenuation,
+            isObstructed,
             shouldInitiateOffer,
           });
+          currentActivePeers.add(candidate.userId);
         }
       }
     }
 
-    // Determine peers who exited proximity
-    for (const prevPeerId of currentActivePeers) {
-      if (!stillNearbyIds.has(prevPeerId)) {
-        leftPeerIds.push(prevPeerId);
+    // Identify peers that moved out of proximity
+    for (const activePeerId of currentActivePeers) {
+      if (!stillNearbyIds.has(activePeerId)) {
+        leftPeerIds.push(activePeerId);
+        currentActivePeers.delete(activePeerId);
       }
     }
 
-    // Update active proximity set for this user
-    this.activeProximityPairs.set(userPairKey, stillNearbyIds);
-
-    // Record latency audit metrics
-    const durationMs = performance.now() - startTime;
-    this.recordLatency(durationMs);
+    const elapsedMs = performance.now() - startTime;
+    this.recordLatency(elapsedMs);
 
     return {
       userId: participant.userId,
@@ -193,20 +253,23 @@ export class ProximityEngine {
   }
 
   /**
-   * Remove a participant when they leave an office or disconnect
+   * Removes a participant when leaving an office or disconnecting.
    */
-  public removeParticipant(officeId: string, userId: string): { leftPeerIds: string[] } {
-    const grid = this.getOfficeGrid(officeId);
-    grid.remove(userId);
+  public removeParticipant(
+    officeId: string,
+    userId: string
+  ): { leftPeerIds: string[] } {
+    const grid = this.officeGrids.get(officeId);
+    if (grid) {
+      grid.remove(userId);
+    }
 
     const userPairKey = this.getPairStateKey(officeId, userId);
-    const prevPeers = this.activeProximityPairs.get(userPairKey);
-    const leftPeerIds = prevPeers ? Array.from(prevPeers) : [];
-
-    // Clean up pair state
+    const activePeers = this.activeProximityPairs.get(userPairKey);
+    const leftPeerIds = activePeers ? Array.from(activePeers) : [];
     this.activeProximityPairs.delete(userPairKey);
 
-    // Also remove from any peers' active set
+    // Also remove from other peers' sets
     for (const peerId of leftPeerIds) {
       const peerKey = this.getPairStateKey(officeId, peerId);
       const peerSet = this.activeProximityPairs.get(peerKey);
@@ -218,14 +281,14 @@ export class ProximityEngine {
     return { leftPeerIds };
   }
 
-  public getParticipantsInOffice(officeId: string): Participant[] {
-    const grid = this.getOfficeGrid(officeId);
-    return grid.getAll();
+  public getParticipant(officeId: string, userId: string): Participant | undefined {
+    const grid = this.officeGrids.get(officeId);
+    return grid ? grid.getEntity(userId) : undefined;
   }
 
-  public getParticipant(officeId: string, userId: string): Participant | undefined {
-    const grid = this.getOfficeGrid(officeId);
-    return grid.getEntity(userId);
+  public getParticipantsInOffice(officeId: string): Participant[] {
+    const grid = this.officeGrids.get(officeId);
+    return grid ? grid.getAll() : [];
   }
 
   private recordLatency(latencyMs: number): void {
@@ -275,3 +338,4 @@ export class ProximityEngine {
 
 // Global Singleton Engine instance
 export const proximityEngine = new ProximityEngine();
+

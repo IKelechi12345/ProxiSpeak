@@ -1,4 +1,4 @@
-import { OfficeLayout, FurnitureItem, Obstacle } from '@proxispeak/shared';
+import { OfficeLayout, FurnitureItem, Obstacle, MeetingZone } from '@proxispeak/shared';
 
 export function createDefaultOfficeLayout(): OfficeLayout {
   const furniture: FurnitureItem[] = [
@@ -70,6 +70,41 @@ export function createDefaultOfficeLayout(): OfficeLayout {
     { id: 'partition-center', type: 'glass_partition', x: 550, y: 640, width: 14, height: 260, attenuationFactor: 0.5, label: 'Acoustic Divider' },
   ];
 
+  const zones: MeetingZone[] = [
+    {
+      id: 'zone-boardroom',
+      name: 'Executive Boardroom',
+      type: 'conference',
+      bounds: { x: 1130, y: 80, width: 460, height: 390 },
+      color: '#3b82f6',
+      isPrivate: true,
+    },
+    {
+      id: 'zone-sprint',
+      name: 'Glass Sprint Room',
+      type: 'breakout',
+      bounds: { x: 1130, y: 590, width: 460, height: 340 },
+      color: '#06b6d4',
+      isPrivate: true,
+    },
+    {
+      id: 'zone-lounge',
+      name: 'Coffee & Breakout Lounge',
+      type: 'lounge',
+      bounds: { x: 110, y: 650, width: 420, height: 320 },
+      color: '#f59e0b',
+      isPrivate: false,
+    },
+    {
+      id: 'zone-workstations',
+      name: 'Engineering Open Workspace',
+      type: 'focus',
+      bounds: { x: 180, y: 120, width: 780, height: 360 },
+      color: '#10b981',
+      isPrivate: false,
+    },
+  ];
+
   return {
     dimensions: {
       width: 1700,
@@ -77,6 +112,7 @@ export function createDefaultOfficeLayout(): OfficeLayout {
     },
     furniture,
     obstacles,
+    zones,
     spawnPoint: {
       x: 750,
       y: 540,

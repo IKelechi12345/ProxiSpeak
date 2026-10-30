@@ -77,4 +77,57 @@ describe('Frontend Zustand Stores & State Machine', () => {
     audioStore.setMasterVolume(-0.5);
     expect(useAudioStore.getState().masterVolume).toBe(0.0);
   });
+
+  it('handles Week 4 in-office spatial chat messages and speech bubbles', () => {
+    const store = useOfficeStore.getState();
+
+    expect(store.messages.length).toBe(0);
+    expect(store.unreadChatCount).toBe(0);
+
+    store.addChatMessage({
+      id: 'msg_1',
+      senderId: 'peer_999',
+      senderName: 'Sarah',
+      senderAvatar: 'avatar-2',
+      text: 'Hello team in proximity!',
+      timestamp: Date.now(),
+      type: 'proximity',
+    });
+
+    const updated = useOfficeStore.getState();
+    expect(updated.messages.length).toBe(1);
+    expect(updated.unreadChatCount).toBe(1);
+    expect(updated.activeBubbles.has('peer_999')).toBe(true);
+    expect(updated.activeBubbles.get('peer_999')?.text).toBe('Hello team in proximity!');
+
+    // Opening chat marks messages read
+    store.setChatOpen(true);
+    expect(useOfficeStore.getState().unreadChatCount).toBe(0);
+  });
+
+  it('triggers quick animated emotes and user presence statuses', () => {
+    const store = useOfficeStore.getState();
+
+    store.triggerEmote('user_123', '??');
+    expect(useOfficeStore.getState().activeEmotes.get('user_123')?.emoji).toBe('??');
+
+    store.setUserStatus('focus');
+    expect(useOfficeStore.getState().userStatus).toBe('focus');
+  });
+
+  it('manages WebRTC screen sharing state toggle', () => {
+    const store = useOfficeStore.getState();
+
+    expect(store.screenSharing.isSharing).toBe(false);
+
+    store.setScreenSharing({
+      isSharing: true,
+      userId: 'user_123',
+      username: 'Devon',
+    });
+
+    expect(useOfficeStore.getState().screenSharing.isSharing).toBe(true);
+    expect(useOfficeStore.getState().screenSharing.username).toBe('Devon');
+  });
 });
+

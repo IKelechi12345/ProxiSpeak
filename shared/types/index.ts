@@ -68,10 +68,27 @@ export interface Obstacle {
   label?: string;
 }
 
+export type ZoneType = 'conference' | 'breakout' | 'lounge' | 'focus';
+
+export interface MeetingZone {
+  id: string;
+  name: string;
+  type: ZoneType;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  color?: string;
+  isPrivate: boolean; // Soundproof audio isolation from participants outside
+}
+
 export interface OfficeLayout {
-  dimensions: Dimensions; // default e.g. 1600x1200
+  dimensions: Dimensions; // default e.g. 1700x1100
   furniture: FurnitureItem[];
   obstacles: Obstacle[];
+  zones?: MeetingZone[];
   spawnPoint: Position;
 }
 
@@ -87,6 +104,8 @@ export interface Office {
   updatedAt: string;
 }
 
+export type UserStatus = 'available' | 'busy' | 'focus' | 'away';
+
 export interface Participant {
   userId: string;
   username: string;
@@ -97,6 +116,7 @@ export interface Participant {
   isMoving: boolean;
   isMuted: boolean;
   isSpeaking: boolean;
+  status?: UserStatus;
   lastSeen: number;
 }
 
@@ -111,6 +131,39 @@ export interface ProximityRelationship {
   isObstructed: boolean;
   isMuted: boolean;
   isSpeaking: boolean;
+}
+
+// In-Office Spatial Chat & Messaging
+export type ChatMessageType = 'proximity' | 'whisper' | 'broadcast';
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar: string;
+  text: string;
+  timestamp: number;
+  type: ChatMessageType;
+  targetUserId?: string;
+  targetUsername?: string;
+  zoneId?: string;
+  zoneName?: string;
+}
+
+// Avatar Quick Emotes
+export interface EmotePayload {
+  userId: string;
+  username: string;
+  emoji: string;
+  timestamp: number;
+}
+
+// Screen Sharing Signaling
+export interface ScreenSharePayload {
+  userId: string;
+  username: string;
+  isSharing: boolean;
+  timestamp: number;
 }
 
 // Socket.io Real-time Event Payloads

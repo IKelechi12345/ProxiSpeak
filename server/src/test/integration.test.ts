@@ -33,11 +33,11 @@ beforeAll(async () => {
       resolve();
     });
   });
-});
+}, 30000);
 
 afterAll(async () => {
-  io.close();
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (io) io.close();
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   await disconnectDatabase();
 });
 
@@ -156,3 +156,4 @@ describe('ProxiSpeak Real-Time Socket.io Tests', () => {
     });
   });
 });
+

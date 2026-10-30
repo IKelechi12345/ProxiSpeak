@@ -179,6 +179,68 @@ describe('ProximityEngine Core & Hysteresis Tests', () => {
     expect(step3.currentRelationships.length).toBe(0);
   });
 
+  it('isolates audio in private meeting zones (breakout rooms)', () => {
+    const boardroom = {
+      id: 'zone-boardroom',
+      name: 'Executive Boardroom',
+      type: 'conference' as const,
+      bounds: { x: 500, y: 500, width: 300, height: 300 },
+      isPrivate: true,
+    };
+    engine.setOfficeZones(officeId, [boardroom]);
+
+    // Colleague 1 and Colleague 2 inside the boardroom
+    const insideA: Participant = {
+      userId: 'user_board_1',
+      username: 'Executive A',
+      avatar: 'avatar_1',
+      officeId,
+      position: { x: 550, y: 550 },
+      direction: 'down',
+      isMoving: false,
+      isMuted: false,
+      isSpeaking: false,
+      lastSeen: Date.now(),
+    };
+    const insideB: Participant = {
+      userId: 'user_board_2',
+      username: 'Executive B',
+      avatar: 'avatar_2',
+      officeId,
+      position: { x: 700, y: 700 },
+      direction: 'down',
+      isMoving: false,
+      isMuted: false,
+      isSpeaking: false,
+      lastSeen: Date.now(),
+    };
+
+    engine.updateParticipant(officeId, insideA);
+    const diffInside = engine.updateParticipant(officeId, insideB);
+
+    // Both inside same private zone => connected with full meeting acoustics
+    expect(diffInside.currentRelationships.length).toBe(1);
+    expect(diffInside.currentRelationships[0].attenuation).toBe(1.0);
+
+    // Colleague 3 standing 30px outside the boardroom wall at (470, 550)
+    const outsideC: Participant = {
+      userId: 'user_outside',
+      username: 'Eavesdropper',
+      avatar: 'avatar_3',
+      officeId,
+      position: { x: 470, y: 550 }, // distance to insideA is only 80px <= 100px enter radius!
+      direction: 'down',
+      isMoving: false,
+      isMuted: false,
+      isSpeaking: false,
+      lastSeen: Date.now(),
+    };
+
+    const diffOutside = engine.updateParticipant(officeId, outsideC);
+    // Soundproof room: outside user cannot hear inside private boardroom
+    expect(diffOutside.currentRelationships.length).toBe(0);
+  });
+
   it('measures spatial query latency and meets the <20ms target', () => {
     const userA: Participant = {
       userId: 'user_alice',
@@ -200,3 +262,4 @@ describe('ProximityEngine Core & Hysteresis Tests', () => {
     expect(report.avgLatencyMs).toBeLessThan(20);
   });
 });
+

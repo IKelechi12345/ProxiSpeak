@@ -1,5 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
-import { OfficeLayout, FurnitureItem, Obstacle } from '@proxispeak/shared';
+import { OfficeLayout, FurnitureItem, Obstacle, MeetingZone } from '@proxispeak/shared';
 
 export interface IOffice extends Document {
   name: string;
@@ -49,6 +49,27 @@ const ObstacleSchema = new Schema<Obstacle>(
   { _id: false }
 );
 
+const MeetingZoneSchema = new Schema<MeetingZone>(
+  {
+    id: { type: String, required: true },
+    name: { type: String, required: true },
+    type: {
+      type: String,
+      required: true,
+      enum: ['conference', 'breakout', 'lounge', 'focus'],
+    },
+    bounds: {
+      x: { type: Number, required: true },
+      y: { type: Number, required: true },
+      width: { type: Number, required: true },
+      height: { type: Number, required: true },
+    },
+    color: { type: String },
+    isPrivate: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
+
 const OfficeSchema = new Schema<IOffice>(
   {
     name: {
@@ -81,14 +102,15 @@ const OfficeSchema = new Schema<IOffice>(
     },
     layout: {
       dimensions: {
-        width: { type: Number, default: 1800 },
-        height: { type: Number, default: 1200 },
+        width: { type: Number, default: 1700 },
+        height: { type: Number, default: 1100 },
       },
       furniture: [FurnitureSchema],
       obstacles: [ObstacleSchema],
+      zones: [MeetingZoneSchema],
       spawnPoint: {
-        x: { type: Number, default: 900 },
-        y: { type: Number, default: 600 },
+        x: { type: Number, default: 750 },
+        y: { type: Number, default: 540 },
       },
     },
   },

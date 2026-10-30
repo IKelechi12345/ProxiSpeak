@@ -36,6 +36,10 @@ Remote teams experience severe "video call fatigue" due to:
 - **Office Layout Editor**: Customizer allowing office owners to place workstations, conference tables, couches, plants, and sound barriers, persisted in MongoDB.
 - **Spatial Latency Audit Tool**: Built-in benchmarking suite verifying sub-20ms spatial query times with simulated 50-user workloads.
 - **Redis Multi-Instance Scalability**: Configured `@socket.io/redis-adapter` for horizontal scaling across multiple Node.js instances.
+- **In-Office Spatial Chat & Canvas Speech Bubbles**: Proximity-scoped messaging with floating comic speech bubbles above 60 FPS avatars, 1:1 whispers, and office-wide broadcasts.
+- **Acoustic Meeting Zones & Breakout Rooms**: Defined conference and focus zones with complete soundproofing isolation between inside and outside participants.
+- **WebRTC Screen Sharing**: Live display and application sharing with picture-in-picture overlay controls.
+- **Animated Emote Reactions & Presence**: Interactive floating avatar emotes (`??`, `??`, `??`, `?`, `??`) and presence statuses (`Available`, `In Meeting`, `Focus`, `Away`).
 
 ---
 
@@ -232,7 +236,11 @@ npm --prefix client test
 - **REST APIs & Database**: 6 tests passed
 - **Authenticated Socket.io & WebRTC Signaling**: 2 tests passed
 - **Client Zustand Stores & State Machine**: 3 tests passed
-- **Total**: **19 / 19 tests passing (100% pass rate)**
+- **Meeting Zones & Soundproofing**: 1 test passed
+- **In-Office Chat & Speech Bubbles**: 1 test passed
+- **Animated Emotes & Presence State**: 1 test passed
+- **Screen Share State Management**: 1 test passed
+- **Total**: **23 / 23 tests passing (100% pass rate)**
 
 ---
 
@@ -267,3 +275,4 @@ docker-compose up --build -d
 
 - **Browser Autoplay Policies**: Modern browsers require an explicit user gesture (click or keypress) before unmuting the Web Audio `AudioContext`. ProxiSpeak automatically detects suspended contexts and provides a one-click unlock banner.
 - **Mesh Topology Scale**: The current proximity-bounded peer-to-peer mesh handles 50+ concurrent users distributed across offices. If all 50 users congregate inside a single 100px cluster, bandwidth increases. Section 6.2 of `docs/architecture.md` outlines the Selective Forwarding Unit (SFU) migration path for high-density mega-crowds.
+

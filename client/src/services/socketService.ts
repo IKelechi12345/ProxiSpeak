@@ -15,6 +15,11 @@ import {
   SignalingAnswerPayload,
   SignalingIceCandidatePayload,
   AudioStatePayload,
+  ChatMessage,
+  ChatMessageType,
+  EmotePayload,
+  ScreenSharePayload,
+  UserStatus,
 } from '@proxispeak/shared';
 
 class SocketService {
@@ -105,28 +110,35 @@ class SocketService {
         isSpeaking: false,
       });
 
-      // Establish real WebRTC connection
+      // Connect WebRTC peer and configure spatial audio
       await webrtcManager.handlePeerEnter(data.peerId, data.shouldInitiateOffer);
+      spatialAudioEngine.updateSpatialParameters(data.peerId, data.relativeX, data.attenuation);
     });
 
     this.socket.on('proximity:leave', (data: ProximityLeavePayload) => {
-      console.log(`Proximity LEAVE: Peer ${data.peerId}. Reason: ${data.reason}`);
+      console.log(`Proximity LEAVE: Peer ${data.peerId} (${data.reason})`);
       useOfficeStore.getState().removeNearbyPeer(data.peerId);
       webrtcManager.handlePeerLeave(data.peerId);
     });
 
     this.socket.on('proximity:update', (data: ProximityUpdatePayload) => {
       useOfficeStore.getState().setNearbyRelationships(data.relationships);
-      // Dynamically adjust audio volume attenuation & stereo panning in real-time
+      // Update spatial panning and attenuation for all nearby peers
       for (const rel of data.relationships) {
-        spatialAudioEngine.updateSpatialParameters(rel.peerId, rel.attenuation, rel.relativeX);
+        spatialAudioEngine.updateSpatialParameters(rel.peerId, rel.relativeX, rel.attenuation);
       }
     });
 
-    // Audio status
+    // Audio states
     this.socket.on('audio:state', (data: AudioStatePayload) => {
-      if (data.isSpeaking !== undefined) {
-        useAudioStore.getState().setPeerSpeaking(data.userId, data.isSpeaking);
+      const officeStore = useOfficeStore.getState();
+      const peer = officeStore.nearbyPeers.get(data.userId);
+      if (peer) {
+        officeStore.addNearbyPeer({
+          ...peer,
+          isMuted: data.isMuted,
+          isSpeaking: !!data.isSpeaking,
+        });
       }
     });
 
@@ -141,6 +153,27 @@ class SocketService {
 
     this.socket.on('webrtc:ice-candidate', async (payload: SignalingIceCandidatePayload) => {
       await webrtcManager.handleSignalingIceCandidate(payload.senderUserId, payload.candidate);
+    });
+
+    // Week 4 Real-time additions: Chat, Emotes, User Status, Screen Share
+    this.socket.on('chat:message', (message: ChatMessage) => {
+      useOfficeStore.getState().addChatMessage(message);
+    });
+
+    this.socket.on('user:emote', (payload: EmotePayload) => {
+      useOfficeStore.getState().triggerEmote(payload.userId, payload.emoji);
+    });
+
+    this.socket.on('user:status', (payload: { userId: string; status: UserStatus }) => {
+      useOfficeStore.getState().updateParticipantStatus(payload.userId, payload.status);
+    });
+
+    this.socket.on('screen:state', (payload: ScreenSharePayload) => {
+      useOfficeStore.getState().setScreenSharing({
+        isSharing: payload.isSharing,
+        userId: payload.userId,
+        username: payload.username,
+      });
     });
 
     return this.socket;
@@ -185,6 +218,31 @@ class SocketService {
     }
   }
 
+  public sendChatMessage(text: string, type: ChatMessageType = 'proximity', targetUserId?: string): void {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('chat:send', { text, type, targetUserId });
+    }
+  }
+
+  public sendEmote(emoji: string): void {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('emote:send', { emoji });
+    }
+  }
+
+  public updateUserStatus(status: UserStatus): void {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('user:status', { status });
+      useOfficeStore.getState().setUserStatus(status);
+    }
+  }
+
+  public sendScreenState(isSharing: boolean): void {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('screen:state', { isSharing });
+    }
+  }
+
   public disconnect(): void {
     if (this.socket) {
       this.socket.disconnect();
@@ -194,3 +252,5 @@ class SocketService {
 }
 
 export const socketService = new SocketService();
+
+

@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useOfficeStore } from '../../stores/officeStore';
 import { useAudioStore } from '../../stores/audioStore';
 import { socketService } from '../../services/socketService';
 import { checkCollision } from '../../../../server/src/utils/geometry';
-import { FurnitureItem, Obstacle, Position } from '@proxispeak/shared';
+import { FurnitureItem, Obstacle, Position, MeetingZone, UserStatus } from '@proxispeak/shared';
 
 const AVATAR_RADIUS = 18;
 const BASE_SPEED = 3.6; // pixels per frame at 60fps
@@ -22,7 +22,7 @@ export const OfficeCanvas: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Store references for render loop without triggering React re-renders
+  // Store references for render loop without triggering unnecessary React re-renders
   const { currentOffice, localParticipant, participants, nearbyPeers, setLocalPosition } = useOfficeStore();
   const { isMuted, isSpeaking, peersSpeaking } = useAudioStore();
 
@@ -38,7 +38,6 @@ export const OfficeCanvas: React.FC = () => {
   });
 
   const localDirection = useRef<'up' | 'down' | 'left' | 'right'>('down');
-  const isCurrentlyMoving = useRef<boolean>(false);
   const lastEmittedTime = useRef<number>(0);
 
   // Remote avatars smooth interpolation records
@@ -99,63 +98,56 @@ export const OfficeCanvas: React.FC = () => {
       const officeDim = office?.layout?.dimensions || { width: 1700, height: 1100 };
       const obstacles = office?.layout?.obstacles || [];
       const furniture = office?.layout?.furniture || [];
+      const zones = office?.layout?.zones || [];
 
-      // 2. Compute Movement Delta
+      // 2. Process Avatar Movement
       let moveX = 0;
       let moveY = 0;
-      const keys = activeKeys.current;
-      const isSprinting = keys.has('shift');
-      const speed = BASE_SPEED * (isSprinting ? SPRINT_MULTIPLIER : 1);
 
-      if (keys.has('w') || keys.has('arrowup')) {
-        moveY -= 1;
-        localDirection.current = 'up';
-      }
-      if (keys.has('s') || keys.has('arrowdown')) {
-        moveY += 1;
-        localDirection.current = 'down';
-      }
-      if (keys.has('a') || keys.has('arrowleft')) {
-        moveX -= 1;
-        localDirection.current = 'left';
-      }
-      if (keys.has('d') || keys.has('arrowright')) {
-        moveX += 1;
-        localDirection.current = 'right';
-      }
+      if (activeKeys.current.has('w') || activeKeys.current.has('arrowup')) moveY -= 1;
+      if (activeKeys.current.has('s') || activeKeys.current.has('arrowdown')) moveY += 1;
+      if (activeKeys.current.has('a') || activeKeys.current.has('arrowleft')) moveX -= 1;
+      if (activeKeys.current.has('d') || activeKeys.current.has('arrowright')) moveX += 1;
 
-      // Mouse click-to-move handling
+      // Mouse click-to-walk navigation
       if (mouseTarget && moveX === 0 && moveY === 0) {
         const dx = mouseTarget.x - localPos.current.x;
         const dy = mouseTarget.y - localPos.current.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > 5) {
+
+        if (dist > 6) {
           moveX = dx / dist;
           moveY = dy / dist;
-          if (Math.abs(dx) > Math.abs(dy)) {
-            localDirection.current = dx > 0 ? 'right' : 'left';
-          } else {
-            localDirection.current = dy > 0 ? 'down' : 'up';
-          }
         } else {
           setMouseTarget(null);
         }
       }
 
-      // Normalize diagonal speed
-      if (moveX !== 0 && moveY !== 0) {
-        moveX *= Math.SQRT1_2;
-        moveY *= Math.SQRT1_2;
-      }
-
       const hasMovement = moveX !== 0 || moveY !== 0;
-      isCurrentlyMoving.current = hasMovement;
 
       if (hasMovement) {
+        // Diagonal normalization
+        let speed = BASE_SPEED;
+        if (activeKeys.current.has('shift')) {
+          speed *= SPRINT_MULTIPLIER;
+        }
+
+        if (moveX !== 0 && moveY !== 0) {
+          const invSqrt2 = 0.70710678;
+          moveX *= invSqrt2;
+          moveY *= invSqrt2;
+        }
+
         const newX = localPos.current.x + moveX * speed;
         const newY = localPos.current.y + moveY * speed;
 
-        // Collision Check (boundaries, walls, solid furniture)
+        // Determine face direction
+        if (Math.abs(moveX) > Math.abs(moveY)) {
+          localDirection.current = moveX > 0 ? 'right' : 'left';
+        } else {
+          localDirection.current = moveY > 0 ? 'down' : 'up';
+        }
+
         const targetPos: Position = { x: newX, y: newY };
         const collided = checkCollision(targetPos, AVATAR_RADIUS, officeDim, obstacles, furniture);
 
@@ -172,7 +164,24 @@ export const OfficeCanvas: React.FC = () => {
           }
         }
 
-        // Throttle movement network updates to ~30-40ms intervals
+        // Detect Zone
+        let matchedZone: MeetingZone | null = null;
+        for (const z of zones) {
+          if (
+            localPos.current.x >= z.bounds.x &&
+            localPos.current.x <= z.bounds.x + z.bounds.width &&
+            localPos.current.y >= z.bounds.y &&
+            localPos.current.y <= z.bounds.y + z.bounds.height
+          ) {
+            matchedZone = z;
+            break;
+          }
+        }
+        if (useOfficeStore.getState().currentZone?.id !== matchedZone?.id) {
+          useOfficeStore.getState().setCurrentZone(matchedZone);
+        }
+
+        // Throttle movement network updates to ~35ms intervals
         const now = performance.now();
         if (now - lastEmittedTime.current > 35) {
           lastEmittedTime.current = now;
@@ -210,14 +219,31 @@ export const OfficeCanvas: React.FC = () => {
       // Apply Camera Translation
       ctx.translate(cameraX, cameraY);
 
+      // Extract fresh store state for canvas drawing
+      const storeState = useOfficeStore.getState();
+      const activeEmotes = storeState.activeEmotes;
+      const activeBubbles = storeState.activeBubbles;
+      const userStatus = storeState.userStatus;
+
       // 4. Render Office Canvas Elements
       renderOfficeFloor(ctx, officeDim);
-      renderZones(ctx);
+      renderMeetingZones(ctx, zones);
       renderFurniture(ctx, furniture);
       renderObstacles(ctx, obstacles);
       renderProximityBridges(ctx, localPos.current, nearbyPeers, participants);
-      renderRemoteAvatars(ctx, participants, remoteAvatars.current, peersSpeaking);
-      renderLocalAvatar(ctx, localPos.current, localParticipant?.username || 'You', isMuted, isSpeaking, localDirection.current);
+      renderRemoteAvatars(ctx, participants, remoteAvatars.current, peersSpeaking, activeEmotes, activeBubbles);
+      renderLocalAvatar(
+        ctx,
+        localPos.current,
+        localParticipant?.username || 'You',
+        localParticipant?.userId || 'local',
+        isMuted,
+        isSpeaking,
+        localDirection.current,
+        userStatus,
+        activeEmotes,
+        activeBubbles
+      );
 
       ctx.restore();
 
@@ -292,26 +318,41 @@ function renderOfficeFloor(ctx: CanvasRenderingContext2D, dimensions: { width: n
   ctx.shadowBlur = 0;
 }
 
-function renderZones(ctx: CanvasRenderingContext2D) {
-  // Executive Boardroom Zone (Top Right)
-  ctx.fillStyle = 'rgba(30, 41, 59, 0.4)';
-  ctx.fillRect(1120, 80, 480, 400);
+function renderMeetingZones(ctx: CanvasRenderingContext2D, zones: MeetingZone[]) {
+  if (!zones || zones.length === 0) {
+    // Default fallback zone outlines
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.4)';
+    ctx.fillRect(1130, 80, 460, 390);
+    ctx.font = '600 12px Inter, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('EXECUTIVE BOARDROOM (SOUNDPROOF)', 1145, 115);
+    return;
+  }
 
-  // Glass Conference Room Zone (Bottom Right)
-  ctx.fillStyle = 'rgba(15, 118, 110, 0.12)';
-  ctx.fillRect(1120, 580, 480, 360);
+  for (const zone of zones) {
+    const { x, y, width, height } = zone.bounds;
+    ctx.save();
 
-  // Lounge & Breakout Area (Bottom Left)
-  ctx.fillStyle = 'rgba(71, 85, 105, 0.18)';
-  ctx.fillRect(100, 680, 420, 340);
+    // Zone floor fill
+    const color = zone.color || '#38bdf8';
+    ctx.fillStyle = color + '15';
+    ctx.fillRect(x, y, width, height);
 
-  // Zone Labels
-  ctx.font = '600 12px Inter, sans-serif';
-  ctx.fillStyle = '#64748b';
-  ctx.fillText('EXECUTIVE BOARDROOM (SOUNDPROOF)', 1140, 115);
-  ctx.fillText('SPRINT ROOM (ACOUSTIC GLASS)', 1140, 615);
-  ctx.fillText('BREAKOUT LOUNGE & CAFE', 130, 705);
-  ctx.fillText('OPEN COLLABORATION WORKSPACE', 240, 130);
+    // Zone dashed border
+    ctx.strokeStyle = color + '55';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 6]);
+    ctx.strokeRect(x, y, width, height);
+    ctx.setLineDash([]);
+
+    // Zone Badge Header
+    ctx.font = '700 11px Inter, sans-serif';
+    ctx.fillStyle = color;
+    const tag = zone.isPrivate ? `🔒 ${zone.name.toUpperCase()} (SOUNDPROOF)` : `📍 ${zone.name.toUpperCase()}`;
+    ctx.fillText(tag, x + 16, y + 26);
+
+    ctx.restore();
+  }
 }
 
 function renderObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle[]) {
@@ -326,7 +367,7 @@ function renderObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle[]) {
       ctx.lineWidth = 1.5;
       ctx.strokeRect(obs.x, obs.y, obs.width, obs.height);
 
-      // Soundproof icon/label
+      // Soundproof label
       if (obs.width > 80 || obs.height > 80) {
         ctx.fillStyle = '#94a3b8';
         ctx.font = '9px Inter, sans-serif';
@@ -350,125 +391,92 @@ function renderObstacles(ctx: CanvasRenderingContext2D, obstacles: Obstacle[]) {
 function renderFurniture(ctx: CanvasRenderingContext2D, furniture: FurnitureItem[]) {
   for (const item of furniture) {
     ctx.save();
+    const { x, y, width, height, type, color, label } = item;
 
-    switch (item.type) {
-      case 'desk': {
-        // Desk Body
-        ctx.fillStyle = item.color || '#1e293b';
+    switch (type) {
+      case 'desk':
+        ctx.fillStyle = color || '#1e293b';
         ctx.beginPath();
-        ctx.roundRect(item.x, item.y, item.width, item.height, 6);
+        ctx.roundRect(x, y, width, height, 8);
         ctx.fill();
         ctx.strokeStyle = '#334155';
         ctx.lineWidth = 1.5;
         ctx.stroke();
 
-        // Dual Monitors on Desk
+        // Monitor & keyboard detail
         ctx.fillStyle = '#0f172a';
-        ctx.fillRect(item.x + item.width / 2 - 40, item.y + 10, 36, 10);
-        ctx.fillRect(item.x + item.width / 2 + 4, item.y + 10, 36, 10);
-
-        // Monitor Blue Screen Glow
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(item.x + item.width / 2 - 38, item.y + 18, 32, 2);
-        ctx.fillRect(item.x + item.width / 2 + 6, item.y + 18, 32, 2);
-
-        // Keyboard & Mouse
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(item.x + item.width / 2 - 22, item.y + 36, 32, 14);
-        ctx.fillRect(item.x + item.width / 2 + 18, item.y + 38, 8, 10);
+        ctx.fillRect(x + width / 2 - 25, y + 10, 50, 10);
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(x + width / 2 - 18, y + 26, 36, 14);
         break;
-      }
 
-      case 'meeting_table': {
-        // Conference Table
-        ctx.fillStyle = item.color || '#334155';
+      case 'meeting_table':
+        ctx.fillStyle = color || '#334155';
         ctx.beginPath();
-        ctx.roundRect(item.x, item.y, item.width, item.height, 12);
+        ctx.roundRect(x, y, width, height, 16);
         ctx.fill();
         ctx.strokeStyle = '#475569';
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Center Media Port Cable Hatch
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(item.x + item.width / 2 - 30, item.y + item.height / 2 - 8, 60, 16);
+        if (label) {
+          ctx.font = '600 11px Inter, sans-serif';
+          ctx.fillStyle = '#94a3b8';
+          ctx.textAlign = 'center';
+          ctx.fillText(label, x + width / 2, y + height / 2 + 4);
+        }
         break;
-      }
 
-      case 'chair': {
-        // Ergonomic Swivel Chair
-        ctx.fillStyle = '#475569';
+      case 'chair':
+        ctx.fillStyle = '#334155';
         ctx.beginPath();
-        ctx.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
+        ctx.arc(x + width / 2, y + height / 2, width / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        break;
+
+      case 'couch':
+        ctx.fillStyle = color || '#475569';
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, 12);
         ctx.fill();
         ctx.strokeStyle = '#64748b';
         ctx.lineWidth = 1.5;
         ctx.stroke();
         break;
-      }
 
-      case 'couch': {
-        // Lounge Couch
-        ctx.fillStyle = item.color || '#334155';
+      case 'plant':
+        ctx.fillStyle = '#065f46';
         ctx.beginPath();
-        ctx.roundRect(item.x, item.y, item.width, item.height, 10);
+        ctx.arc(x + width / 2, y + height / 2, width / 2, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = '#475569';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-        break;
-      }
-
-      case 'plant': {
-        // Decorative Office Plant Pot
-        ctx.fillStyle = '#78350f';
-        ctx.beginPath();
-        ctx.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2 - 2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Green Leaves Cluster
         ctx.fillStyle = '#10b981';
-        const cx = item.x + item.width / 2;
-        const cy = item.y + item.height / 2;
-        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 3) {
-          const leafX = cx + Math.cos(angle) * 11;
-          const leafY = cy + Math.sin(angle) * 11;
-          ctx.beginPath();
-          ctx.arc(leafX, leafY, 6, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        break;
-      }
-
-      case 'water_cooler': {
-        // Water Cooler
-        ctx.fillStyle = '#e2e8f0';
         ctx.beginPath();
-        ctx.roundRect(item.x, item.y, item.width, item.height, 4);
-        ctx.fill();
-        // Cyan Water Jug
-        ctx.fillStyle = '#38bdf8';
-        ctx.beginPath();
-        ctx.arc(item.x + item.width / 2, item.y + item.height / 2, 12, 0, Math.PI * 2);
+        ctx.arc(x + width / 2, y + height / 2, width / 3, 0, Math.PI * 2);
         ctx.fill();
         break;
-      }
 
-      case 'whiteboard': {
-        // Whiteboard
+      case 'water_cooler':
+        ctx.fillStyle = '#0284c7';
+        ctx.beginPath();
+        ctx.arc(x + width / 2, y + height / 2, width / 2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+
+      case 'whiteboard':
         ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(item.x, item.y, item.width, item.height);
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(item.x, item.y, item.width, item.height);
+        ctx.fillRect(x, y, width, height);
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, width, height);
         break;
-      }
 
       default:
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(item.x, item.y, item.width, item.height);
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(x, y, width, height);
     }
-
     ctx.restore();
   }
 }
@@ -479,24 +487,21 @@ function renderProximityBridges(
   nearbyPeers: Map<string, any>,
   participants: Map<string, any>
 ) {
-  for (const rel of nearbyPeers.values()) {
-    const peer = participants.get(rel.peerId);
+  for (const [peerId, rel] of nearbyPeers.entries()) {
+    const peer = participants.get(peerId);
     if (!peer) continue;
 
     ctx.save();
-    // Line connecting users in proximity range
     ctx.beginPath();
     ctx.moveTo(localPos.x, localPos.y);
     ctx.lineTo(peer.position.x, peer.position.y);
 
     if (rel.isObstructed) {
-      // Sound is muffled by wall/partition! Orange dashed ray
-      ctx.strokeStyle = 'rgba(249, 115, 22, 0.6)';
+      ctx.strokeStyle = 'rgba(249, 115, 22, 0.45)';
       ctx.lineWidth = 2;
-      ctx.setLineDash([6, 6]);
+      ctx.setLineDash([5, 5]);
     } else {
-      // Clean open spatial audio path! Cyan/emerald connection
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+      ctx.strokeStyle = `rgba(56, 189, 248, ${Math.max(0.2, rel.attenuation)})`;
       ctx.lineWidth = 2.5;
     }
     ctx.stroke();
@@ -523,6 +528,7 @@ function renderProximityBridges(
     ctx.stroke();
 
     ctx.fillStyle = rel.isObstructed ? '#fed7aa' : '#bae6fd';
+    ctx.textAlign = 'left';
     ctx.fillText(tagText, midX - textWidth / 2, midY + 3);
 
     ctx.restore();
@@ -533,7 +539,9 @@ function renderRemoteAvatars(
   ctx: CanvasRenderingContext2D,
   participants: Map<string, any>,
   remoteInterpolations: Map<string, InterpolatedAvatar>,
-  peersSpeaking: Record<string, boolean>
+  peersSpeaking: Record<string, boolean>,
+  activeEmotes: Map<string, any>,
+  activeBubbles: Map<string, any>
 ) {
   for (const [userId, participant] of participants.entries()) {
     // Interpolate remote position smoothly
@@ -592,8 +600,20 @@ function renderRemoteAvatars(
     ctx.textAlign = 'center';
     ctx.fillText(participant.username.charAt(0).toUpperCase(), x, y + 4.5);
 
-    // Name Tag
-    renderNameTag(ctx, x, y - AVATAR_RADIUS - 8, participant.username, false, participant.isMuted);
+    // Name Tag & Status Dot
+    renderNameTag(ctx, x, y - AVATAR_RADIUS - 8, participant.username, false, participant.isMuted, participant.status);
+
+    // Speech Bubble
+    const bubble = activeBubbles.get(userId);
+    if (bubble && bubble.expiresAt > Date.now()) {
+      renderSpeechBubble(ctx, x, y - AVATAR_RADIUS - 28, bubble.text);
+    }
+
+    // Floating Animated Emote
+    const emote = activeEmotes.get(userId);
+    if (emote && emote.expiresAt > Date.now()) {
+      renderFloatingEmote(ctx, x, y, emote.emoji, emote.expiresAt);
+    }
 
     ctx.restore();
   }
@@ -603,9 +623,13 @@ function renderLocalAvatar(
   ctx: CanvasRenderingContext2D,
   pos: Position,
   username: string,
+  userId: string,
   isMuted: boolean,
   isSpeaking: boolean,
-  direction: 'up' | 'down' | 'left' | 'right'
+  direction: 'up' | 'down' | 'left' | 'right',
+  status: UserStatus,
+  activeEmotes: Map<string, any>,
+  activeBubbles: Map<string, any>
 ) {
   const x = pos.x;
   const y = pos.y;
@@ -657,8 +681,20 @@ function renderLocalAvatar(
   ctx.textAlign = 'center';
   ctx.fillText(username.charAt(0).toUpperCase(), x, y + 4.5);
 
-  // Name Tag
-  renderNameTag(ctx, x, y - AVATAR_RADIUS - 8, `${username} (You)`, true, isMuted);
+  // Name Tag & Status Dot
+  renderNameTag(ctx, x, y - AVATAR_RADIUS - 8, `${username} (You)`, true, isMuted, status);
+
+  // Speech Bubble
+  const bubble = activeBubbles.get(userId);
+  if (bubble && bubble.expiresAt > Date.now()) {
+    renderSpeechBubble(ctx, x, y - AVATAR_RADIUS - 28, bubble.text);
+  }
+
+  // Floating Animated Emote
+  const emote = activeEmotes.get(userId);
+  if (emote && emote.expiresAt > Date.now()) {
+    renderFloatingEmote(ctx, x, y, emote.emoji, emote.expiresAt);
+  }
 
   ctx.restore();
 }
@@ -689,14 +725,15 @@ function renderNameTag(
   y: number,
   name: string,
   isLocal: boolean,
-  isMuted?: boolean
+  isMuted?: boolean,
+  status?: UserStatus
 ) {
   ctx.font = '600 11px Inter, sans-serif';
   const nameWidth = ctx.measureText(name).width;
-  const padding = 16;
+  const padding = 18;
   const tagWidth = nameWidth + padding + (isMuted ? 14 : 0);
 
-  ctx.fillStyle = isLocal ? 'rgba(3, 105, 161, 0.9)' : 'rgba(15, 23, 42, 0.85)';
+  ctx.fillStyle = isLocal ? 'rgba(3, 105, 161, 0.92)' : 'rgba(15, 23, 42, 0.88)';
   ctx.beginPath();
   ctx.roundRect(x - tagWidth / 2, y - 9, tagWidth, 18, 5);
   ctx.fill();
@@ -704,11 +741,74 @@ function renderNameTag(
   ctx.lineWidth = 1;
   ctx.stroke();
 
+  // Status Dot
+  let statusColor = '#34d399'; // available
+  if (status === 'busy') statusColor = '#f43f5e';
+  else if (status === 'focus') statusColor = '#c084fc';
+  else if (status === 'away') statusColor = '#fbbf24';
+
+  ctx.beginPath();
+  ctx.arc(x - tagWidth / 2 + 6, y, 3, 0, Math.PI * 2);
+  ctx.fillStyle = statusColor;
+  ctx.fill();
+
   ctx.fillStyle = '#f8fafc';
   ctx.textAlign = 'center';
-  ctx.fillText(name, isMuted ? x - 6 : x, y + 4);
+  ctx.fillText(name, isMuted ? x - 4 : x + 2, y + 4);
 
   if (isMuted) {
-    ctx.fillText('🔇', x + nameWidth / 2 + 2, y + 4);
+    ctx.fillText('🔇', x + nameWidth / 2 + 4, y + 4);
   }
+}
+
+function renderSpeechBubble(ctx: CanvasRenderingContext2D, x: number, y: number, text: string) {
+  ctx.save();
+  ctx.font = '500 11px Inter, sans-serif';
+  const textWidth = ctx.measureText(text).width;
+  const bubbleWidth = textWidth + 18;
+  const bubbleHeight = 22;
+  const bx = x - bubbleWidth / 2;
+  const by = y - bubbleHeight;
+
+  // Bubble background
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
+  ctx.beginPath();
+  ctx.roundRect(bx, by, bubbleWidth, bubbleHeight, 8);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Downward pointer tail
+  ctx.beginPath();
+  ctx.moveTo(x - 5, by + bubbleHeight);
+  ctx.lineTo(x, by + bubbleHeight + 6);
+  ctx.lineTo(x + 5, by + bubbleHeight);
+  ctx.closePath();
+  ctx.fill();
+
+  // Text
+  ctx.fillStyle = '#0f172a';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, x, by + 15);
+
+  ctx.restore();
+}
+
+function renderFloatingEmote(ctx: CanvasRenderingContext2D, x: number, y: number, emoji: string, expiresAt: number) {
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) return;
+
+  const progress = 1 - remaining / 3000; // 0 to 1
+  const yOffset = -progress * 42;
+  const alpha = Math.max(0, 1 - progress * progress);
+  const scale = 1 + Math.sin(progress * Math.PI) * 0.25;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = `${Math.round(20 * scale)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(emoji, x, y - 28 + yOffset);
+  ctx.restore();
 }

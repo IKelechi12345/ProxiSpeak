@@ -10,6 +10,11 @@ import {
   SignalingAnswerPayload,
   SignalingIceCandidatePayload,
   AudioStatePayload,
+  ChatMessage,
+  ChatMessageType,
+  EmotePayload,
+  ScreenSharePayload,
+  UserStatus,
 } from '@proxispeak/shared';
 import { logger } from '../utils/logger';
 
@@ -46,8 +51,9 @@ export function registerSocketHandlers(io: Server): void {
           handleLeaveOffice(socket, io);
         }
 
-        // Cache office obstacles in proximity engine
+        // Cache office obstacles & meeting zones in proximity engine
         proximityEngine.setOfficeObstacles(officeId, office.layout.obstacles || []);
+        proximityEngine.setOfficeZones(officeId, office.layout.zones || []);
 
         const spawnPos = initialPosition || office.layout.spawnPoint || { x: 750, y: 540 };
 
@@ -61,6 +67,7 @@ export function registerSocketHandlers(io: Server): void {
           isMoving: false,
           isMuted: false,
           isSpeaking: false,
+          status: 'available',
           lastSeen: Date.now(),
         };
 
@@ -276,6 +283,116 @@ export function registerSocketHandlers(io: Server): void {
         isMuted: p ? p.isMuted : false,
         isSpeaking: data.isSpeaking,
       });
+    });
+
+    /**
+     * chat:send - In-Office Spatial Proximity & Direct Chat
+     */
+    socket.on('chat:send', (data: { text: string; type?: ChatMessageType; targetUserId?: string }) => {
+      const officeId = socket.data.officeId;
+      if (!officeId || !data.text || !data.text.trim()) return;
+
+      const senderPos = socket.data.lastPosition || { x: 750, y: 540 };
+      const localZone = proximityEngine.getZoneForPosition(officeId, senderPos);
+
+      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const message: ChatMessage = {
+        id: messageId,
+        senderId: user.id,
+        senderName: user.username,
+        senderAvatar: user.avatar,
+        text: data.text.trim().substring(0, 500),
+        timestamp: Date.now(),
+        type: data.type || 'proximity',
+        targetUserId: data.targetUserId,
+        zoneId: localZone?.id,
+        zoneName: localZone?.name,
+      };
+
+      if (data.type === 'whisper' && data.targetUserId) {
+        // Direct private whisper to target peer + local sender
+        const targetSocketId = userSocketMap.get(data.targetUserId);
+        if (targetSocketId) {
+          io.to(targetSocketId).emit('chat:message', message);
+        }
+        socket.emit('chat:message', message);
+      } else if (data.type === 'broadcast') {
+        // Office-wide announcement
+        io.to(`office:${officeId}`).emit('chat:message', message);
+      } else {
+        // Proximity chat: Delivered to participants within proximity radius or in the same meeting zone
+        const allParticipants = proximityEngine.getParticipantsInOffice(officeId);
+        const recipientSocketIds = new Set<string>();
+        recipientSocketIds.add(socket.id); // local user
+
+        for (const p of allParticipants) {
+          if (p.userId === user.id) continue;
+          const pZone = proximityEngine.getZoneForPosition(officeId, p.position);
+          const dist = Math.sqrt(
+            Math.pow(p.position.x - senderPos.x, 2) + Math.pow(p.position.y - senderPos.y, 2)
+          );
+
+          const inSameZone = localZone && pZone && localZone.id === pZone.id;
+          const isBlockedByPrivateZone = (localZone?.isPrivate || pZone?.isPrivate) && !inSameZone;
+
+          if (!isBlockedByPrivateZone && (inSameZone || dist <= 140)) {
+            const pSocketId = userSocketMap.get(p.userId);
+            if (pSocketId) recipientSocketIds.add(pSocketId);
+          }
+        }
+
+        for (const sId of recipientSocketIds) {
+          io.to(sId).emit('chat:message', message);
+        }
+      }
+    });
+
+    /**
+     * emote:send - Real-Time Canvas Emote Reactions
+     */
+    socket.on('emote:send', (data: { emoji: string }) => {
+      const officeId = socket.data.officeId;
+      if (!officeId || !data.emoji) return;
+
+      const payload: EmotePayload = {
+        userId: user.id,
+        username: user.username,
+        emoji: data.emoji,
+        timestamp: Date.now(),
+      };
+      io.to(`office:${officeId}`).emit('user:emote', payload);
+    });
+
+    /**
+     * user:status - Presence & Focus Status
+     */
+    socket.on('user:status', (data: { status: UserStatus }) => {
+      const officeId = socket.data.officeId;
+      if (!officeId || !data.status) return;
+
+      const p = proximityEngine.getParticipant(officeId, user.id);
+      if (p) p.status = data.status;
+
+      io.to(`office:${officeId}`).emit('user:status', {
+        userId: user.id,
+        status: data.status,
+      });
+    });
+
+    /**
+     * screen:state - Real-Time Screen Sharing Status
+     */
+    socket.on('screen:state', (data: { isSharing: boolean }) => {
+      const officeId = socket.data.officeId;
+      if (!officeId) return;
+
+      const payload: ScreenSharePayload = {
+        userId: user.id,
+        username: user.username,
+        isSharing: !!data.isSharing,
+        timestamp: Date.now(),
+      };
+      socket.to(`office:${officeId}`).emit('screen:state', payload);
     });
 
     /**

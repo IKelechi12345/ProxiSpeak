@@ -12,21 +12,23 @@ import { NearbyUsersPanel } from '../components/office/NearbyUsersPanel';
 import { SpatialAuditModal } from '../components/office/SpatialAuditModal';
 import { LayoutEditorModal } from '../components/office/LayoutEditorModal';
 import { SettingsModal } from '../components/office/SettingsModal';
-import { Volume2, Mic, AlertCircle } from 'lucide-react';
+import { ChatDrawer } from '../components/office/ChatDrawer';
+import { QuickActionBar } from '../components/office/QuickActionBar';
+import { ScreenShareModal } from '../components/office/ScreenShareModal';
+import { Volume2 } from 'lucide-react';
 
 export const OfficePage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   const { user, token } = useAuthStore();
-  const { currentOffice, isConnected } = useOfficeStore();
-  const { isMuted, setIsSpeaking } = useAudioStore();
+  const { currentOffice } = useOfficeStore();
+  const { setIsSpeaking } = useAudioStore();
 
   const [isAuditOpen, setIsAuditOpen] = useState(false);
   const [isLayoutOpen, setIsLayoutOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [audioNeedsUnlock, setAudioNeedsUnlock] = useState(false);
-  const [micStatus, setMicStatus] = useState<string>('initializing');
 
   // Initialize Socket.io and WebRTC on mount
   useEffect(() => {
@@ -44,12 +46,7 @@ export const OfficePage: React.FC = () => {
         await socketService.joinOffice(id);
 
         // Setup local microphone stream
-        const micResult = await webrtcManager.initializeLocalStream();
-        if (micResult.isSynthetic) {
-          setMicStatus('synthetic_test_mode');
-        } else {
-          setMicStatus('active');
-        }
+        await webrtcManager.initializeLocalStream();
 
         // Voice Activity Detection callback
         webrtcManager.setSpeakingCallback((speaking) => {
@@ -116,15 +113,24 @@ export const OfficePage: React.FC = () => {
       {/* Nearby Peers Sound Panel */}
       <NearbyUsersPanel />
 
+      {/* Quick Action Bar (Statuses, Emotes, Screen Share, Chat Trigger, Zone HUD) */}
+      <QuickActionBar />
+
+      {/* In-Office Spatial Chat Drawer */}
+      <ChatDrawer />
+
+      {/* Screen Share Overlay Modal */}
+      <ScreenShareModal />
+
       {/* Control Hint Footer Pill */}
-      <div className="absolute bottom-5 left-6 z-30 pointer-events-none">
+      <div className="absolute bottom-5 left-6 z-30 pointer-events-none hidden md:block">
         <div className="glass-panel px-3.5 py-1.5 rounded-full text-[11px] text-slate-400 font-medium flex items-center space-x-2 border border-slate-800">
           <span className="text-slate-300 font-semibold">Controls:</span>
-          <span>WASD / Arrow Keys to move</span>
+          <span>WASD / Arrow Keys</span>
           <span className="text-slate-600">•</span>
           <span>Shift to Sprint</span>
           <span className="text-slate-600">•</span>
-          <span>Click on floor to walk</span>
+          <span>Click floor to walk</span>
         </div>
       </div>
 

@@ -98,3 +98,4 @@ export const ScreenShareModal: React.FC = () => {
     </div>
   );
 };
+
